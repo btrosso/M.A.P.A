@@ -5,7 +5,7 @@ import os
 from src.moves.move_analyzer import MoveAnalyzer
 
 # ===== Config =====
-VIDEO_FILENAME = "kata_recording_20251209_125732.mp4"  # <-- set this correctly
+VIDEO_FILENAME = "kata_recording_20251209_125732.mp4"
 VIDEO_PATH = os.path.join("data", VIDEO_FILENAME)
 
 PLAYBACK_DELAY_MS = 33  # ~30 FPS; increase to slow down, decrease to speed up
@@ -33,7 +33,7 @@ def main():
     move_analyzer = MoveAnalyzer(fps=fps)
 
     paused = False
-    step = False  # if True, advance exactly one frame while staying paused
+    step = False
     frame_count = 0
 
     with mp_pose.Pose(
@@ -48,6 +48,7 @@ def main():
         print("  q - quit")
         print("  p or space - pause / resume")
         print("  n - next frame (step one frame when paused)")
+        print("  d - print current debug metrics to terminal")
         print("Press 'p' or spacebar to pause at any time.")
 
         last_frame_bgr = None
@@ -63,6 +64,9 @@ def main():
 
                 frame_count += 1
                 height, width, _ = frame.shape
+
+                # Start a new debug record for this frame
+                move_analyzer.reset_debug_data()
 
                 # BGR -> RGB
                 image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -83,7 +87,18 @@ def main():
                     )
 
                     # ---- high-level movement analysis ----
-                    move_analyzer.analyze_center_punch(
+                    
+                    # 1) stance (baseline for everything else)
+                    move_analyzer.analyze_horse_stance(
+                        frame_bgr,
+                        landmarks,
+                        frame_count,
+                        width,
+                        height,
+                    )
+
+                    # 2) yoi (ready position)
+                    move_analyzer.analyze_yoi(
                         frame_bgr,
                         landmarks,
                         width,
@@ -96,14 +111,21 @@ def main():
                         width,
                         height,
                     )
-                
-                    move_analyzer.analyze_horse_stance(
-                        frame_bgr,
-                        landmarks,
-                        frame_count,
-                        width,
-                        height,
-                    )
+                    
+                    # move_analyzer.analyze_center_punch(
+                    #     frame_bgr,
+                    #     landmarks,
+                    #     width,
+                    #     height,
+                    # )
+
+                    # move_analyzer.analyze_over_shoulder_punch(
+                    #     frame_bgr,
+                    #     landmarks,
+                    #     width,
+                    #     height,
+                    # )
+                    
 
                 # store last processed frame + landmarks for paused replay
                 last_frame_bgr = frame_bgr
@@ -115,7 +137,6 @@ def main():
             else:
                 # When paused and not stepping, just reuse the last frame
                 if last_frame_bgr is None:
-                    # If we somehow paused before any frame was processed, skip
                     continue
                 frame_bgr = last_frame_bgr
                 height, width = frame_bgr.shape[:2]
@@ -133,9 +154,17 @@ def main():
                 paused = not paused
                 print(f"{'Paused' if paused else 'Resumed'} at frame {frame_count}")
             elif key == ord("n"):
-                # Step exactly one frame forward (stay paused)
                 paused = True
                 step = True
+            elif key == ord("d"):
+                # Print current debug metrics to terminal
+                snapshot = move_analyzer.get_debug_snapshot()
+                print(f"\n[Debug] Frame {frame_count}")
+                if not snapshot:
+                    print("  (no debug data recorded)")
+                else:
+                    for k, v in snapshot.items():
+                        print(f"  {k}: {v}")
 
     cap.release()
     cv2.destroyAllWindows()
