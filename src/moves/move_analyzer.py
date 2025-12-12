@@ -6,6 +6,7 @@ import cv2
 import mediapipe as mp
 
 from src.utils.geometry import angle_between_points
+from . import move_config as cfg
 
 mp_pose = mp.solutions.pose
 
@@ -20,49 +21,48 @@ class MoveAnalyzer:
     - Track per-frame debug metrics that can be drawn or printed.
     """
 
-    # ---- Config defaults ----
-    MIN_VIS = 0.5
+    # ---- Config defaults (delegated to move_config) ----
+    MIN_VIS = cfg.MIN_VIS
 
     # Stance config
-    CALIBRATION_FRAMES = 60
-    STANCE_TOLERANCE = 0.15
-    STANCE_CALIBRATION_DELAY_SEC = 2.0
-    
-    # Yoi config (torso-normalized: 0 = chest, 1 = hips)
-    YOI_WRIST_TORSO_MIN = 0.60   # rough waist-ish lower band
-    YOI_WRIST_TORSO_MAX = 0.85   # just above hips
-    YOI_MAX_WRIST_SEPARATION_NORM = 0.6  # max L/R wrist separation as fraction of shoulder width
+    CALIBRATION_FRAMES = cfg.CALIBRATION_FRAMES
+    STANCE_TOLERANCE = cfg.STANCE_TOLERANCE
+    STANCE_CALIBRATION_DELAY_SEC = cfg.STANCE_CALIBRATION_DELAY_SEC
 
+    # Yoi config
+    YOI_WRIST_TORSO_MIN = cfg.YOI_WRIST_TORSO_MIN
+    YOI_WRIST_TORSO_MAX = cfg.YOI_WRIST_TORSO_MAX
+    YOI_MAX_WRIST_SEPARATION_NORM = cfg.YOI_MAX_WRIST_SEPARATION_NORM
 
     # Punch config
-    PUNCH_EXTENDED_MIN_ANGLE = 150.0  # (still usable if you want angle too)
-    PUNCH_CHAMBER_MAX_ANGLE = 120.0
+    PUNCH_EXTENDED_MIN_ANGLE = cfg.PUNCH_EXTENDED_MIN_ANGLE
+    PUNCH_CHAMBER_MAX_ANGLE = cfg.PUNCH_CHAMBER_MAX_ANGLE
 
-    # Arm length-based punch heuristics (normalized ratios)
-    ARM_EXTENDED_MIN_RATIO = 0.40  # >= 80% of calibrated max length = extended
-    ARM_CHAMBER_MAX_RATIO = 0.75   # <= 60% of calibrated max length = chambered
+    ARM_EXTENDED_MIN_RATIO = cfg.ARM_EXTENDED_MIN_RATIO
+    ARM_CHAMBER_MAX_RATIO = cfg.ARM_CHAMBER_MAX_RATIO
 
-    # Torso-relative bands (0 = chest/shoulders, 1 = hips)
-    PUNCH_TORSO_MIN = 0.20   # lower bound of "punch" height band
-    PUNCH_TORSO_MAX = 0.55   # upper bound of "punch" height band
+    PUNCH_TORSO_MIN = cfg.PUNCH_TORSO_MIN
+    PUNCH_TORSO_MAX = cfg.PUNCH_TORSO_MAX
 
-    CHAMBER_TORSO_MIN = 0.55  # lower bound of "chamber at hip" band
-    CHAMBER_TORSO_MAX = 1.05  # upper bound (a bit below hip to allow noise)
+    CHAMBER_TORSO_MIN = cfg.CHAMBER_TORSO_MIN
+    CHAMBER_TORSO_MAX = cfg.CHAMBER_TORSO_MAX
 
-    # Upper block config (torso-normalized: 0 = chest, 1 = hips, negative = above chest)
-    UPPER_BLOCK_WRIST_MIN_TORSO_Y = -1.00   # allow wrist well above chest/head
-    UPPER_BLOCK_WRIST_MAX_TORSO_Y =  0.10   # anything lower than this is too low for UB
+    # Upper block config
+    UPPER_BLOCK_WRIST_MIN_TORSO_Y = cfg.UPPER_BLOCK_WRIST_MIN_TORSO_Y
+    UPPER_BLOCK_WRIST_MAX_TORSO_Y = cfg.UPPER_BLOCK_WRIST_MAX_TORSO_Y
 
-    UPPER_BLOCK_ELBOW_MIN_ANGLE = 80.0      # a bit bent
-    UPPER_BLOCK_ELBOW_MAX_ANGLE = 150.0     # but not fully locked out
+    UPPER_BLOCK_ELBOW_MIN_ANGLE = cfg.UPPER_BLOCK_ELBOW_MIN_ANGLE
+    UPPER_BLOCK_ELBOW_MAX_ANGLE = cfg.UPPER_BLOCK_ELBOW_MAX_ANGLE
+
+    UB_MIN_HEIGHT_SEPARATION = cfg.UB_MIN_HEIGHT_SEPARATION
 
     # Over-shoulder punch config
-    # torso-y: 0 = chest, 1 = hips, negative = above chest/head
-    OVER_SHOULDER_WRIST_MIN_TORSO_Y = -1.20   # allow high, over-head
-    OVER_SHOULDER_WRIST_MAX_TORSO_Y = -0.10   # still clearly above chest
+    OVER_SHOULDER_WRIST_MIN_TORSO_Y = cfg.OVER_SHOULDER_WRIST_MIN_TORSO_Y
+    OVER_SHOULDER_WRIST_MAX_TORSO_Y = cfg.OVER_SHOULDER_WRIST_MAX_TORSO_Y
 
-    OVER_SHOULDER_MIN_SIDE_OFFSET = 0.08      # wrist must be clearly to that side of body center
-    OVER_SHOULDER_MIN_ELBOW_ANGLE = 130.0     # fairly extended, not super bent
+    OVER_SHOULDER_MIN_SIDE_OFFSET = cfg.OVER_SHOULDER_MIN_SIDE_OFFSET
+    OVER_SHOULDER_MIN_ELBOW_ANGLE = cfg.OVER_SHOULDER_MIN_ELBOW_ANGLE
+
 
     def __init__(self, fps: float):
         if fps is None or fps <= 0:
@@ -591,12 +591,32 @@ class MoveAnalyzer:
         left_is_ub = _is_upper_block(l_wrist_norm_y, left_elbow_angle)
 
         upper_block_text = None
-        if right_is_ub and not left_is_ub:
-            upper_block_text = "Right upper block"
-        elif left_is_ub and not right_is_ub:
-            upper_block_text = "Left upper block"
-        elif left_is_ub and right_is_ub:
-            upper_block_text = "Upper block (both)"
+
+        # require a clear vertical separation between wrists
+        if r_wrist_norm_y is not None and l_wrist_norm_y is not None:
+            # positive: right wrist is lower on the body than left
+            diff_right_minus_left = r_wrist_norm_y - l_wrist_norm_y
+            diff_left_minus_right = l_wrist_norm_y - r_wrist_norm_y
+
+            # Right upper block: right wrist high (UB), clearly above left wrist
+            if (
+                right_is_ub
+                and not left_is_ub
+                and diff_left_minus_right >= self.UB_MIN_HEIGHT_SEPARATION
+            ):
+                upper_block_text = "Right upper block"
+
+            # Left upper block: left wrist high (UB), clearly above right wrist
+            elif (
+                left_is_ub
+                and not right_is_ub
+                and diff_right_minus_left >= self.UB_MIN_HEIGHT_SEPARATION
+            ):
+                upper_block_text = "Left upper block"
+
+            # (Optional) both arms up overhead in some special posture
+            elif left_is_ub and right_is_ub:
+                upper_block_text = "Upper block (both)"
 
         if upper_block_text:
             self._record_debug("upper_block_label", upper_block_text)
@@ -610,6 +630,7 @@ class MoveAnalyzer:
                 2,
                 cv2.LINE_AA,
             )
+
 
     def analyze_over_shoulder_punch(self, frame_bgr, landmarks, width, height):
         """
