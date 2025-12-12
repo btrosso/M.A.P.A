@@ -65,8 +65,8 @@ def main():
                 frame_count += 1
                 height, width, _ = frame.shape
 
-                # Start a new debug record for this frame
-                move_analyzer.reset_debug_data()
+                # reset HUD state at the start of the frame
+                move_analyzer.reset_hud()
 
                 # BGR -> RGB
                 image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -87,45 +87,14 @@ def main():
                     )
 
                     # ---- high-level movement analysis ----
-                    
-                    # 1) stance (baseline for everything else)
-                    move_analyzer.analyze_horse_stance(
-                        frame_bgr,
-                        landmarks,
-                        frame_count,
-                        width,
-                        height,
+                    move_analyzer.run_kata_sequence(
+                        frame_bgr, 
+                        landmarks, 
+                        frame_count, 
+                        width, 
+                        height
                     )
-
-                    # 2) yoi (ready position)
-                    move_analyzer.analyze_yoi(
-                        frame_bgr,
-                        landmarks,
-                        width,
-                        height,
-                    )
-
-                    move_analyzer.analyze_upper_block(
-                        frame_bgr,
-                        landmarks,
-                        width,
-                        height,
-                    )
-                    
-                    # move_analyzer.analyze_center_punch(
-                    #     frame_bgr,
-                    #     landmarks,
-                    #     width,
-                    #     height,
-                    # )
-
-                    # move_analyzer.analyze_over_shoulder_punch(
-                    #     frame_bgr,
-                    #     landmarks,
-                    #     width,
-                    #     height,
-                    # )
-                    
+                   
 
                 # store last processed frame + landmarks for paused replay
                 last_frame_bgr = frame_bgr
@@ -141,6 +110,9 @@ def main():
                 frame_bgr = last_frame_bgr
                 height, width = frame_bgr.shape[:2]
 
+            # draw the HUD on top of everything
+            move_analyzer.draw_hud(frame_bgr)
+            
             # Show frame (either new or last)
             cv2.imshow("27 Movements - Modular Analyzer (with playback controls)", frame_bgr)
 
